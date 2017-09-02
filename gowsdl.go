@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"text/template"
@@ -156,17 +157,17 @@ func (g *GoWSDL) unmarshal() error {
 	var data []byte
 
 	parsedURL, err := url.Parse(g.file)
-	if parsedURL.Scheme == "" {
-		//log.Println("Reading", "file", g.file)
+	if isHttp, _ := regexp.MatchString("^[hH][tT][tT][pP].*", parsedURL.Scheme); isHttp {
+		log.Println("Downloading", "file", g.file)
 
-		data, err = ioutil.ReadFile(g.file)
+		data, err = downloadFile(g.file, g.ignoreTLS)
 		if err != nil {
 			return err
 		}
 	} else {
-		log.Println("Downloading", "file", g.file)
+		log.Printf("ReadFile location %s", g.file)
 
-		data, err = downloadFile(g.file, g.ignoreTLS)
+		data, err = ioutil.ReadFile(g.file)
 		if err != nil {
 			return err
 		}
@@ -176,6 +177,10 @@ func (g *GoWSDL) unmarshal() error {
 	err = xml.Unmarshal(data, g.wsdl)
 	if err != nil {
 		return err
+	}
+
+	for _, wsdlImport := range g.wsdl.Imports {
+		download(g, parsedURL, wsdlImport.Location, "wsdl")
 	}
 
 	for _, schema := range g.wsdl.Types.Schemas {
@@ -189,72 +194,112 @@ func (g *GoWSDL) unmarshal() error {
 }
 
 func (g *GoWSDL) resolveXSDExternals(schema *XSDSchema, u *url.URL) error {
-	download := func(u1 *url.URL, loc string) error {
-		location, err := u1.Parse(loc)
-		if err != nil {
-			return err
-		}
-		_, schemaName := filepath.Split(location.Path)
-		if g.resolvedXSDExternals[schemaName] {
-			return nil
-		}
-
-		schemaLocation := location.String()
-		if !location.IsAbs() {
-			if !u1.IsAbs() {
-				return fmt.Errorf("Unable to resolve external schema %s through WSDL URL %s", schemaLocation, u1)
-			}
-			schemaLocation = u1.Scheme + "://" + u1.Host + schemaLocation
-		}
-
-		log.Println("Downloading external schema", "location", schemaLocation)
-
-		data, err := downloadFile(schemaLocation, g.ignoreTLS)
-		if err != nil {
-			return err
-		}
-
-		newschema := new(XSDSchema)
-
-		err = xml.Unmarshal(data, newschema)
-		if err != nil {
-			return err
-		}
-
-		if len(newschema.Includes) > 0 &&
-			maxRecursion > g.currentRecursionLevel {
-			g.currentRecursionLevel++
-
-			// log.Printf("Entering recursion %d\n", g.currentRecursionLevel)
-			err = g.resolveXSDExternals(newschema, u1)
-			if err != nil {
-				return err
-			}
-		}
-
-		g.wsdl.Types.Schemas = append(g.wsdl.Types.Schemas, newschema)
-
-		if g.resolvedXSDExternals == nil {
-			g.resolvedXSDExternals = make(map[string]bool, maxRecursion)
-		}
-		g.resolvedXSDExternals[schemaName] = true
-
-		return nil
-	}
-
 	for _, impts := range schema.Imports {
-		if e := download(u, impts.SchemaLocation); e != nil {
+		if e := download(g, u, impts.SchemaLocation, ""); e != nil {
 			return e
 		}
 	}
 
 	for _, incl := range schema.Includes {
-		if e := download(u, schema.TargetNamespace+"/"+incl.SchemaLocation); e != nil {
+		if e := download(g, u, schema.TargetNamespace+"/"+incl.SchemaLocation, ""); e != nil {
 			return e
 		}
 	}
+	return nil
+
+}
+
+func download(g *GoWSDL, u1 *url.URL, loc string, schemaType string) error {
+	var data []byte
+	var locationDir, locationName string
+	location, err := u1.Parse(loc)
+	if err != nil {
+		return err
+	}
+
+	if location.Path != "" {
+		locationDir, locationName = filepath.Split(location.Path)
+	} else {
+		locationDir, locationName = filepath.Split(location.String())
+	}
+
+	if g.resolvedXSDExternals[locationName] {
+		return nil
+	}
+
+	if isHttp, _ := regexp.MatchString("^[hH][tT][tT][pP].*", location.Scheme); isHttp {
+		schemaLocation := location.String()
+		if !u1.IsAbs() {
+			return fmt.Errorf("Unable to resolve external schema %s through WSDL URL %s", schemaLocation, u1)
+		}
+		//schemaLocation = u1.Scheme + "://" + u1.Host + schemaLocation
+
+		log.Println("Downloading external schema", "location", schemaLocation)
+
+		if data, err = downloadFile(schemaLocation, g.ignoreTLS); err != nil {
+			return err
+		}
+	} else {
+		if isRelative, _ := regexp.MatchString(`^[/\\]{0,1}\.{0,1}[/\\]$`, locationDir); isRelative {
+			locationDir, _ = filepath.Split(u1.String())
+		}
+		log.Printf("ReadFile location %s%s", locationDir, locationName)
+		if data, err = ioutil.ReadFile(locationDir + locationName); err != nil {
+			return err
+		}
+	}
+
+	if schemaType == "wsdl" {
+		newSchema := new(WSDL)
+
+		err = xml.Unmarshal(data, newSchema)
+		if err != nil {
+			return err
+		}
+		if len(newSchema.Types.Schemas) > 0 {
+			g.wsdl.Types = newSchema.Types
+		}
+		if len(newSchema.Messages) > 0 {
+			g.wsdl.Messages = newSchema.Messages
+		}
+		if len(newSchema.PortTypes) > 0 {
+			g.wsdl.PortTypes = newSchema.PortTypes
+		}
+		if len(newSchema.Binding) > 0 {
+			g.wsdl.Binding = newSchema.Binding
+		}
+		if len(newSchema.Service) > 0 {
+			g.wsdl.Service = newSchema.Service
+		}
+	} else {
+		newSchema := new(XSDSchema)
+
+		err = xml.Unmarshal(data, newSchema)
+		if err != nil {
+			return err
+		}
+
+		if len(newSchema.Includes) > 0 &&
+			maxRecursion > g.currentRecursionLevel {
+			g.currentRecursionLevel++
+
+			// log.Printf("Entering recursion %d\n", g.currentRecursionLevel)
+			err = g.resolveXSDExternals(newSchema, u1)
+			if err != nil {
+				return err
+			}
+		}
+
+		g.wsdl.Types.Schemas = append(g.wsdl.Types.Schemas, newSchema)
+	}
+
+	if g.resolvedXSDExternals == nil {
+		g.resolvedXSDExternals = make(map[string]bool, maxRecursion)
+	}
+	g.resolvedXSDExternals[locationName] = true
 
 	return nil
+
 }
 
 func (g *GoWSDL) genTypes() ([]byte, error) {
