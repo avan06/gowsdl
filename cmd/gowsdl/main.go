@@ -54,7 +54,7 @@ import (
 	"log"
 	"os"
 
-	gen "github.com/hooklift/gowsdl"
+	gen "gowsdl"
 )
 
 // Version is initialized in compilation time by go build.
@@ -68,6 +68,7 @@ var pkg = flag.String("p", "myservice", "Package under which code will be genera
 var outFile = flag.String("o", "myservice.go", "File where the generated code will be saved")
 var insecure = flag.Bool("i", false, "Skips TLS Verification")
 var makePublic = flag.Bool("make-public", true, "Make the generated types public/exported")
+var usageTypeName = flag.Bool("usage-type-name", false, "Operations and types name is priority usage xsd type name, false: usage element name")
 
 func init() {
 	log.SetFlags(0)
@@ -101,7 +102,7 @@ func main() {
 	}
 
 	// load wsdl
-	gowsdl, err := gen.NewGoWSDL(wsdlPath, *pkg, *insecure, *makePublic)
+	gowsdl, err := gen.NewGoWSDL(wsdlPath, *pkg, *insecure, *makePublic, *usageTypeName)
 	if err != nil {
 		log.Fatalln(err)
 	}

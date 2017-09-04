@@ -35,6 +35,7 @@ type GoWSDL struct {
 	wsdl                  *WSDL
 	resolvedXSDExternals  map[string]bool
 	currentRecursionLevel uint8
+	usageTypeName         bool
 }
 
 var cacheDir = filepath.Join(os.TempDir(), "gowsdl-cache")
@@ -81,7 +82,7 @@ func downloadFile(url string, ignoreTLS bool) ([]byte, error) {
 }
 
 // NewGoWSDL initializes WSDL generator.
-func NewGoWSDL(file, pkg string, ignoreTLS bool, exportAllTypes bool) (*GoWSDL, error) {
+func NewGoWSDL(file, pkg string, ignoreTLS bool, exportAllTypes bool, usageTypeName bool) (*GoWSDL, error) {
 	file = strings.TrimSpace(file)
 	if file == "" {
 		return nil, errors.New("WSDL file is required to generate Go proxy")
@@ -97,10 +98,11 @@ func NewGoWSDL(file, pkg string, ignoreTLS bool, exportAllTypes bool) (*GoWSDL, 
 	}
 
 	return &GoWSDL{
-		file:         file,
-		pkg:          pkg,
-		ignoreTLS:    ignoreTLS,
-		makePublicFn: makePublicFn,
+		file:          file,
+		pkg:           pkg,
+		ignoreTLS:     ignoreTLS,
+		makePublicFn:  makePublicFn,
+		usageTypeName: usageTypeName,
 	}, nil
 }
 
@@ -190,6 +192,45 @@ func (g *GoWSDL) unmarshal() error {
 		}
 	}
 
+	if !g.usageTypeName {
+		for _, schema := range g.wsdl.Types.Schemas {
+			for _, element := range schema.Elements {
+				if element.Type != "" {
+					if xsd2GoTypes[removeNS(element.Type)] != "" {
+						if simpleType := findSimpleType(schema.SimpleType, element.Type); simpleType == nil {
+							simpleType := &XSDSimpleType{Name: element.Name, Restriction: XSDRestriction{Base: element.Type}}
+							schema.SimpleType = append(schema.SimpleType, simpleType)
+						}
+					}
+					if complexType := findComplexType(schema.ComplexTypes, element.Type); complexType != nil {
+						element.ComplexType = complexType
+						element.Type = ""
+					}
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+func findSimpleType(simpleTypes []*XSDSimpleType, typeName string) *XSDSimpleType {
+	for _, simpleType := range simpleTypes {
+		if simpleType.Name == removeNS(typeName) {
+			return simpleType
+		}
+	}
+
+	return nil
+}
+
+func findComplexType(complexTypes []*XSDComplexType, typeName string) *XSDComplexType {
+	for _, complexType := range complexTypes {
+		if complexType.Name == removeNS(typeName) {
+			return complexType
+		}
+	}
+
 	return nil
 }
 
@@ -217,7 +258,7 @@ func download(g *GoWSDL, u1 *url.URL, loc string, schemaType string) error {
 		return err
 	}
 
-	if location.Path != "" {
+	if location.Host == "" && location.Path != "" {
 		locationDir, locationName = filepath.Split(location.Path)
 	} else {
 		locationDir, locationName = filepath.Split(location.String())
@@ -509,7 +550,7 @@ func (g *GoWSDL) findType(message string) string {
 		}
 
 		part := msg.Parts[0]
-		if part.Type != "" {
+		if g.usageTypeName && part.Type != "" {
 			return stripns(part.Type)
 		}
 
@@ -518,7 +559,7 @@ func (g *GoWSDL) findType(message string) string {
 		for _, schema := range g.wsdl.Types.Schemas {
 			for _, el := range schema.Elements {
 				if strings.EqualFold(elRef, el.Name) {
-					if el.Type != "" {
+					if g.usageTypeName && el.Type != "" {
 						return stripns(el.Type)
 					}
 					return el.Name

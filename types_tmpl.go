@@ -8,13 +8,15 @@ var typesTmpl = `
 {{define "SimpleType"}}
 	{{$type := replaceReservedWords .Name | makePublic}}
 	type {{$type}} {{toGoType .Restriction.Base}}
-	const (
-		{{with .Restriction}}
+	{{with .Restriction}}
+		{{ if .Enumeration }}
+		const (
 			{{range .Enumeration}}
 				{{if .Doc}} {{.Doc | comment}} {{end}}
 				{{$type}}{{$value := replaceReservedWords .Value}}{{$value | makePublic}} {{$type}} = "{{goString .Value}}" {{end}}
+		)
 		{{end}}
-	)
+	{{end}}
 {{end}}
 
 {{define "ComplexContent"}}
