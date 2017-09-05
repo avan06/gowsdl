@@ -194,24 +194,39 @@ func (g *GoWSDL) unmarshal() error {
 
 	if !g.usageTypeName {
 		for _, schema := range g.wsdl.Types.Schemas {
-			for _, element := range schema.Elements {
-				if element.Type != "" {
-					if xsd2GoTypes[removeNS(element.Type)] != "" {
-						if simpleType := findSimpleType(schema.SimpleType, element.Type); simpleType == nil {
-							simpleType := &XSDSimpleType{Name: element.Name, Restriction: XSDRestriction{Base: element.Type}}
-							schema.SimpleType = append(schema.SimpleType, simpleType)
-						}
-					}
-					if complexType := findComplexType(schema.ComplexTypes, element.Type); complexType != nil {
-						element.ComplexType = complexType
-						element.Type = ""
-					}
+			for _, complexType := range schema.ComplexTypes {
+				for _, element := range complexType.Sequence {
+					elementTypeChk(schema, &element, false)
 				}
+			}
+
+			for _, element := range schema.Elements {
+				elementTypeChk(schema, element, true)
 			}
 		}
 	}
 
 	return nil
+}
+
+func elementTypeChk(schema *XSDSchema, element *XSDElement, isChkSimple bool) {
+	if element.ComplexType != nil && len(element.ComplexType.Sequence) > 0 {
+		for _, element := range element.ComplexType.Sequence {
+			elementTypeChk(schema, &element, false)
+		}
+	}
+	if element.Type != "" {
+		if isChkSimple && xsd2GoTypes[strings.ToLower(removeNS(element.Type))] != "" {
+			if simpleType := findSimpleType(schema.SimpleType, element.Name); simpleType == nil {
+				simpleType := &XSDSimpleType{Name: element.Name, Restriction: XSDRestriction{Base: element.Type}}
+				schema.SimpleType = append(schema.SimpleType, simpleType)
+			}
+		}
+		if complexType := findComplexType(schema.ComplexTypes, element.Type); complexType != nil {
+			element.ComplexType = complexType
+			element.Type = ""
+		}
+	}
 }
 
 func findSimpleType(simpleTypes []*XSDSimpleType, typeName string) *XSDSimpleType {

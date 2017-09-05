@@ -9,13 +9,10 @@ var typesTmpl = `
 	{{$type := replaceReservedWords .Name | makePublic}}
 	type {{$type}} {{toGoType .Restriction.Base}}
 	{{with .Restriction}}
-		{{ if .Enumeration }}
 		const (
-			{{range .Enumeration}}
-				{{if .Doc}} {{.Doc | comment}} {{end}}
+			{{range .Enumeration}} {{if .Doc}} {{.Doc | comment}} {{end}}
 				{{$type}}{{$value := replaceReservedWords .Value}}{{$value | makePublic}} {{$type}} = "{{goString .Value}}" {{end}}
 		)
-		{{end}}
 	{{end}}
 {{end}}
 
@@ -79,9 +76,16 @@ var typesTmpl = `
 
 {{range .Schemas}}
 	{{ $targetNamespace := .TargetNamespace }}
-
 	{{range .SimpleType}}
-		{{template "SimpleType" .}}
+		{{$type := replaceReservedWords .Name | makePublic}}
+		{{ if not .Restriction.Enumeration }}
+			type {{$type}} struct {
+				XMLName xml.Name ` + "`xml:\"{{$targetNamespace}} {{.Name}}\"`" + `
+				Value *{{toGoType .Restriction.Base}} ` + "`xml:\",chardata\"`" + `
+			}
+		{{else}}
+			{{template "SimpleType" .}}
+		{{end}}
 	{{end}}
 
 	{{range .Elements}}
@@ -111,7 +115,7 @@ var typesTmpl = `
 		{{/* ComplexTypeGlobal */}}
 		{{$name := replaceReservedWords .Name | makePublic}}
 		type {{$name}} struct {
-			XMLName xml.Name ` + "`xml:\"{{$targetNamespace}} {{.Name}}\"`" + `
+			XMLName xml.Name
 			{{if ne .ComplexContent.Extension.Base ""}}
 				{{template "ComplexContent" .ComplexContent}}
 			{{else if ne .SimpleContent.Extension.Base ""}}
