@@ -108,6 +108,12 @@ var typesTmpl = `
 					{{end}}
 				}
 			{{end}}
+			{{with .SimpleType}}
+				type {{$name | replaceReservedWords | makePublic}} struct {
+					XMLName xml.Name ` + "`xml:\"{{$targetNamespace}} {{$name}}\"`" + `
+					Value *{{toGoType .Restriction.Base}} ` + "`xml:\",chardata\"`" + `
+				}
+			{{end}}
 		{{end}}
 	{{end}}
 
